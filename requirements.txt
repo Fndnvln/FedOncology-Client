@@ -1,0 +1,5 @@
+streamlit
+flwr
+tensorflow
+pandas
+scikit-learn
