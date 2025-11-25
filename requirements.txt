@@ -1,7 +1,6 @@
 streamlit
 flwr==1.10.0
-tensorflow==2.15.0
+tensorflow
 pandas
 scikit-learn
 numpy<2.0.0
-protobuf==4.25.3
