@@ -1,7 +1,7 @@
 streamlit
-flwr
-tensorflow-cpu
+flwr==1.10.0
+tensorflow==2.15.0
 pandas
 scikit-learn
 numpy<2.0.0
-protobuf<4.0.0
+protobuf<4.24.0
