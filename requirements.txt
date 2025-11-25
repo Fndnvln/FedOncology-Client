@@ -4,4 +4,4 @@ tensorflow==2.15.0
 pandas
 scikit-learn
 numpy<2.0.0
-protobuf<4.24.0
+protobuf==4.25.3
