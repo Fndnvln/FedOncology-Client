@@ -3,6 +3,8 @@ import flwr as fl
 import tensorflow as tf
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
+import multiprocessing
+import time
 
 st.set_page_config(page_title="FedOncology Clinic", page_icon="🎗️")
 st.title("🎗️ FedOncology: Clinic Node")
@@ -17,6 +19,43 @@ if 'model' not in st.session_state:
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     st.session_state['model'] = model
 
+# --- HELPER FUNCTION TO RUN CLIENT IN PROCESS ---
+def run_flower_client(server_address, weights, X_train, y_train):
+    """Runs the Flower client in a separate process to avoid Streamlit threading issues."""
+    
+    # Re-create model architecture inside the process
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(32, activation='relu', input_shape=(30,)),
+        tf.keras.layers.Dense(16, activation='relu'),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    
+    # Set initial weights
+    if weights:
+        model.set_weights(weights)
+
+    class TumorClient(fl.client.NumPyClient):
+        def get_parameters(self, config):
+            return model.get_weights()
+        def fit(self, parameters, config):
+            model.set_weights(parameters)
+            model.fit(X_train, y_train, epochs=1, batch_size=32, verbose=0)
+            return model.get_weights(), len(X_train), {}
+        def evaluate(self, parameters, config):
+            model.set_weights(parameters)
+            loss, acc = model.evaluate(X_train, y_train, verbose=0)
+            return loss, len(X_train), {"accuracy": acc}
+
+    print(f"Attempting to connect to {server_address}...")
+    
+    # Start the client
+    # We use to_client() as required by modern Flower
+    fl.client.start_client(
+        server_address=server_address,
+        client=TumorClient().to_client()
+    )
+
 # --- TABS FOR NAVIGATION ---
 tab1, tab2 = st.tabs(["🧠 Collaborative Training", "🩺 Diagnose Patients"])
 
@@ -27,7 +66,7 @@ with tab1:
     st.header("Participate in Federation")
     
     # [NEW] Input for Server Address (Allows connecting via ngrok)
-    server_address = st.text_input("Server Address (HQ)", value="127.0.0.1:8080", help="Paste the ngrok address here if connecting remotely.")
+    server_address = st.text_input("Server Address (HQ)", value="0.tcp.ngrok.io:12345", help="Paste the ngrok address here. Remove tcp:// prefix.")
 
     train_file = st.file_uploader("Upload Clinic History (CSV)", type="csv", key="train_up")
 
@@ -51,29 +90,22 @@ with tab1:
             X = scaler.fit_transform(X)
 
             if st.button("🚀 Join Federation & Train"):
-                class TumorClient(fl.client.NumPyClient):
-                    def get_parameters(self, config):
-                        return st.session_state['model'].get_weights()
-                    def fit(self, parameters, config):
-                        st.session_state['model'].set_weights(parameters)
-                        st.session_state['model'].fit(X, y, epochs=1, batch_size=32, verbose=0)
-                        return st.session_state['model'].get_weights(), len(X), {}
-                    def evaluate(self, parameters, config):
-                        st.session_state['model'].set_weights(parameters)
-                        loss, acc = st.session_state['model'].evaluate(X, y, verbose=0)
-                        return loss, len(X), {"accuracy": acc}
-
-                with st.spinner(f"Connecting to HQ at {server_address}..."):
+                with st.spinner(f"Connecting to HQ at {server_address}... Check your terminal logs if it hangs."):
                     try:
-                        # [UPDATED] Uses the variable from the text input
-                        fl.client.start_numpy_client(
-                            server_address=server_address, 
-                            client=TumorClient()
+                        # We use a Process to bypass the Streamlit "Main Thread" restriction
+                        current_weights = st.session_state['model'].get_weights()
+                        
+                        p = multiprocessing.Process(
+                            target=run_flower_client, 
+                            args=(server_address, current_weights, X, y)
                         )
-                        st.success("✅ Training Complete! Model Updated.")
+                        p.start()
+                        p.join() # Wait for the process to finish (training round)
+                        
+                        st.success("✅ Training Session Complete!")
                     except Exception as e:
-                        st.error(f"Connection Error: {e}")
-                        st.warning("Make sure the Server is running and the address is correct.")
+                        st.error(f"Process Error: {e}")
+
         else:
             st.error("Training data must have a 'diagnosis' column.")
 
